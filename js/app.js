@@ -1,0 +1,211 @@
+/**
+ * app.js
+ *
+ * Builds the UI, runs the detection loop for each godown,
+ * and draws bounding boxes on the canvas overlay.
+ */
+
+const GODOWNS = [
+    { id: 1, src: 'videos/CCTV_Godown_Fire_Video_Generation.mp4'  },
+    { id: 2, src: 'videos/Video_Generation_Without_Fire.mp4'      },
+    { id: 3, src: 'videos/Video_Generation_Without_Fire.mp4'      },
+    { id: 4, src: 'videos/Video_Generation_Without_Fire.mp4'      },
+    { id: 5, src: 'videos/Video_Generation_Without_Fire.mp4'      },
+];
+
+const DETECTION_INTERVAL_MS = 0; // run inference back-to-back, no artificial wait
+
+// ─── Telegram alert config ───────────────────────────────────────────────────
+// TG_BOT_TOKEN and TG_CHAT_ID are loaded from config.js (gitignored)
+
+function sendTelegramAlert(godownId) {
+    const text = `🚨 FIRE DETECTED — Godown ${godownId}\nImmediate attention required!`;
+    fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: TG_CHAT_ID, text }),
+    })
+    .then(r => r.json())
+    .then(data => console.log(`Telegram alert sent for Godown ${godownId}:`, data.ok))
+    .catch(err => console.error('Telegram error:', err));
+}
+
+// ─── Alert state (consecutive frame tracking per godown) ─────────────────────
+// Bounding boxes still draw at CONF_THRESHOLD (0.35) for visual responsiveness.
+// But the badge / alert only triggers after ALERT_CONSECUTIVE consecutive frames
+// where at least one detection has confidence > ALERT_CONF_THRESHOLD.
+
+const ALERT_CONF_THRESHOLD = 0.45; // confidence required for a "strong" frame
+const WINDOW_SIZE          = 5;   // look at last 5 frames
+const WINDOW_MIN           = 3;   // need 3 out of 5 to be strong
+
+const alertState = {};  // godownId → { history: boolean[], alerted: boolean }
+
+const ALERT_COOLDOWN_MS = 60000; // 60 seconds between Telegram alerts per godown
+
+function initAlertState(id) {
+    alertState[id] = { history: [], alerted: false, lastAlertTime: 0 };
+}
+
+function updateAlertState(id, detections) {
+    const state = alertState[id];
+    const hasStrong = detections.some(d => d.confidence >= ALERT_CONF_THRESHOLD);
+
+    // Push latest result, keep only last WINDOW_SIZE entries
+    state.history.push(hasStrong);
+    if (state.history.length > WINDOW_SIZE) state.history.shift();
+
+    // Count how many of the last N frames had strong detections
+    const strongCount = state.history.filter(Boolean).length;
+    const confirmed   = strongCount >= WINDOW_MIN;
+
+    const now = Date.now();
+    if (confirmed && now - state.lastAlertTime > ALERT_COOLDOWN_MS) {
+        state.alerted = true;
+        state.lastAlertTime = now;
+        console.log(`🚨 [Godown ${id}] FIRE CONFIRMED — ${strongCount}/${WINDOW_SIZE} frames`);
+        sendTelegramAlert(id);
+    }
+
+    // Reset alerted flag when fire clears (so it can re-trigger if fire returns)
+    if (strongCount === 0) {
+        state.alerted = false;
+    }
+
+    return confirmed;
+}
+
+// ─── Build UI ────────────────────────────────────────────────────────────────
+
+function buildUI() {
+    const grid = document.getElementById('grid');
+
+    GODOWNS.forEach(({ id, src }) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.id = `card-${id}`;
+
+        card.innerHTML = `
+            <div class="video-wrap">
+                <div class="card-header">
+                    <span class="godown-label">Godown ${id}</span>
+                    <span class="badge" id="badge-${id}">NORMAL</span>
+                </div>
+                <video id="video-${id}"
+                       src="${src}"
+                       autoplay muted loop playsinline>
+                </video>
+                <canvas id="canvas-${id}"></canvas>
+            </div>
+        `;
+
+        grid.appendChild(card);
+    });
+}
+
+// ─── Draw bounding boxes ─────────────────────────────────────────────────────
+
+function drawDetections(canvas, video, detections) {
+    // Sync canvas pixel size to the video's rendered size on screen
+    canvas.width  = video.clientWidth;
+    canvas.height = video.clientHeight;
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    detections.forEach(({ box, confidence, label }) => {
+        const [x1, y1, x2, y2] = box;
+        const w = x2 - x1;
+        const h = y2 - y1;
+
+        // Fire = red, Smoke = orange
+        const color = label === 'fire' ? '#ff3333' : '#ff9900';
+
+        // Draw the bounding box rectangle
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2;
+        ctx.strokeRect(x1, y1, w, h);
+
+        // Draw label background + text
+        const text = `${label} ${Math.round(confidence * 100)}%`;
+        ctx.font = 'bold 12px monospace';
+        const textW = ctx.measureText(text).width;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x1, y1 - 20, textW + 8, 20);
+
+        ctx.fillStyle = '#fff';
+        ctx.fillText(text, x1 + 4, y1 - 5);
+    });
+}
+
+// ─── Update card status ───────────────────────────────────────────────────────
+
+function updateCard(id, detections) {
+    const card  = document.getElementById(`card-${id}`);
+    const badge = document.getElementById(`badge-${id}`);
+
+    // Use consecutive-frame confirmation, not single-frame detection
+    const confirmed = updateAlertState(id, detections);
+
+    if (confirmed) {
+        card.classList.add('on-fire');
+        badge.textContent = 'FIRE';
+        badge.className   = 'badge fire';
+    } else {
+        card.classList.remove('on-fire');
+        badge.textContent = 'NORMAL';
+        badge.className   = 'badge';
+    }
+}
+
+// ─── Detection loop (one per godown) ─────────────────────────────────────────
+
+function startLoop(id) {
+    const video  = document.getElementById(`video-${id}`);
+    const canvas = document.getElementById(`canvas-${id}`);
+
+    async function loop() {
+        // Clear immediately so previous boxes don't linger during inference
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+
+        const detections = await detect(video); // from detector.js
+        drawDetections(canvas, video, detections);
+        updateCard(id, detections);
+        setTimeout(loop, DETECTION_INTERVAL_MS);
+    }
+
+    // Wait until the video has at least one frame ready before starting
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        loop();
+    } else {
+        video.addEventListener('canplay', loop, { once: true });
+    }
+}
+
+// ─── Entry point ─────────────────────────────────────────────────────────────
+
+async function main() {
+    const statusEl = document.getElementById('status');
+
+    buildUI();
+
+    try {
+        statusEl.textContent = 'Loading fire detection model...';
+        await loadModel('model/fire_model.onnx'); // from detector.js
+        statusEl.textContent  = 'All systems active — monitoring 5 godowns';
+        statusEl.className    = 'status ok';
+
+        // Init alert tracking and stagger starts
+        GODOWNS.forEach(({ id }, index) => {
+            initAlertState(id);
+            setTimeout(() => startLoop(id), index * 400);
+        });
+    } catch (err) {
+        statusEl.textContent = `Model error: ${err.message}`;
+        statusEl.className   = 'status error';
+        console.error(err);
+    }
+}
+
+main();

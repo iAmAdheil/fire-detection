@@ -1,0 +1,8 @@
+venv/
+runs/
+fire_dataset/
+
+*.mp4
+__pycache__/
+*.jpg
+*.png

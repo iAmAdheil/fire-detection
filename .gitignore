@@ -1,0 +1,15 @@
+.DS_Store
+venv/
+__pycache__/
+node_modules/
+
+# Videos (too large for git)
+*.mp4
+*.webm
+
+# Model weights (large binary files)
+*.pt
+*.onnx.data
+
+# Secrets — NEVER commit this
+config.js
