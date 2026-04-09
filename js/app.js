@@ -7,8 +7,8 @@
 
 const GODOWNS = [
     { id: 1, src: 'videos/CCTV_Godown_Fire_Video_Generation.mp4'  },
-    { id: 2, src: 'videos/Video_Generation_Without_Fire.mp4'      },
-    { id: 3, src: 'videos/Video_Generation_Without_Fire.mp4'      },
+    { id: 2, src: 'videos/Fight_Detection_Model_Test_Video.mp4'   },
+    { id: 3, src: 'videos/Video_of_Fire_and_Fighting.mp4'         },
     { id: 4, src: 'videos/Video_Generation_Without_Fire.mp4'      },
     { id: 5, src: 'videos/Video_Generation_Without_Fire.mp4'      },
 ];
@@ -18,15 +18,19 @@ const DETECTION_INTERVAL_MS = 0; // run inference back-to-back, no artificial wa
 // ─── Telegram alert config ───────────────────────────────────────────────────
 // TG_BOT_TOKEN and TG_CHAT_ID are loaded from config.js (gitignored)
 
-function sendTelegramAlert(godownId) {
-    const text = `🚨 FIRE DETECTED — Godown ${godownId}\nImmediate attention required!`;
+function sendTelegramAlert(godownId, type = 'fire') {
+    const messages = {
+        fire:  `🚨 FIRE DETECTED — Godown ${godownId}\nImmediate attention required!`,
+        fight: `⚠️ FIGHT DETECTED — Godown ${godownId}\nImmediate attention required!`,
+    };
+    const text = messages[type] || messages.fire;
     fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: TG_CHAT_ID, text }),
     })
     .then(r => r.json())
-    .then(data => console.log(`Telegram alert sent for Godown ${godownId}:`, data.ok))
+    .then(data => console.log(`Telegram alert (${type}) sent for Godown ${godownId}:`, data.ok))
     .catch(err => console.error('Telegram error:', err));
 }
 
@@ -74,6 +78,156 @@ function updateAlertState(id, detections) {
 
     return confirmed;
 }
+
+// ─── Fight alert state (same sliding window approach) ───────────────────────
+
+const FIGHT_ALERT_THRESHOLD = 0.5;
+const FIGHT_WINDOW_SIZE     = 5;
+const FIGHT_WINDOW_MIN      = 3;
+
+const fightAlertState = {};
+
+function initFightAlertState(id) {
+    fightAlertState[id] = { history: [], alerted: false, lastAlertTime: 0 };
+}
+
+function updateFightAlertState(id, fightProb) {
+    const state = fightAlertState[id];
+    const isStrong = fightProb >= FIGHT_ALERT_THRESHOLD;
+
+    state.history.push(isStrong);
+    if (state.history.length > FIGHT_WINDOW_SIZE) state.history.shift();
+
+    const strongCount = state.history.filter(Boolean).length;
+    const confirmed   = strongCount >= FIGHT_WINDOW_MIN;
+
+    const now = Date.now();
+    if (confirmed && now - state.lastAlertTime > ALERT_COOLDOWN_MS) {
+        state.alerted = true;
+        state.lastAlertTime = now;
+        console.log(`⚠️ [Godown ${id}] FIGHT CONFIRMED — ${strongCount}/${FIGHT_WINDOW_SIZE} frames`);
+        sendTelegramAlert(id, 'fight');
+    }
+
+    if (strongCount === 0) {
+        state.alerted = false;
+    }
+
+    return confirmed;
+}
+
+// ─── Draw skeleton overlays ─────────────────────────────────────────────────
+
+function drawSkeletonsOverlay(canvas, persons, fightConfirmed) {
+    // Draws on existing canvas without clearing — call after drawDetections
+    const ctx = canvas.getContext('2d');
+    const color = fightConfirmed ? '#ff3333' : '#00ccff';
+
+    persons.forEach(({ keypoints, confidence }) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2;
+
+        SKELETON.forEach(([a, b]) => {
+            const kpA = keypoints[a];
+            const kpB = keypoints[b];
+            if (kpA.conf > 0.3 && kpB.conf > 0.3) {
+                ctx.beginPath();
+                ctx.moveTo(kpA.x, kpA.y);
+                ctx.lineTo(kpB.x, kpB.y);
+                ctx.stroke();
+            }
+        });
+
+        keypoints.forEach(kp => {
+            if (kp.conf > 0.3) {
+                ctx.beginPath();
+                ctx.arc(kp.x, kp.y, 3, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+            }
+        });
+    });
+}
+
+// ─── Update card status for fight godowns ───────────────────────────────────
+
+function updateCardFight(id, fightProb) {
+    const card  = document.getElementById(`card-${id}`);
+    const badge = document.getElementById(`badge-${id}`);
+
+    const confirmed = updateFightAlertState(id, fightProb);
+
+    if (confirmed) {
+        card.classList.add('on-fight');
+        badge.textContent = 'FIGHT';
+        badge.className   = 'badge fight';
+    } else {
+        card.classList.remove('on-fight');
+        badge.textContent = 'NORMAL';
+        badge.className   = 'badge';
+    }
+
+    return confirmed;
+}
+
+// ─── Combined detection loop (fire + fight in parallel) ─────────────────────
+
+function startCombinedLoop(id) {
+    const video  = document.getElementById(`video-${id}`);
+    const canvas = document.getElementById(`canvas-${id}`);
+
+    async function loop() {
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+
+        // Run fire and fight detection in parallel on the same frame
+        const [detections, { persons, fightProb }] = await Promise.all([
+            detect(video),
+            detectFight(video, id),
+        ]);
+
+        // Draw fire bounding boxes first, then skeletons on top
+        canvas.width  = video.clientWidth;
+        canvas.height = video.clientHeight;
+        drawDetections(canvas, video, detections);
+
+        const fightConfirmed = updateCardFight(id, fightProb);
+        drawSkeletonsOverlay(canvas, persons, fightConfirmed);
+
+        // Fire alert state (runs independently)
+        updateCard(id, detections);
+
+        // If fight is confirmed, override the badge to show FIGHT
+        // (fire badge takes priority only if both are active)
+        const fireConfirmed = alertState[id] && alertState[id].alerted;
+        const card  = document.getElementById(`card-${id}`);
+        const badge = document.getElementById(`badge-${id}`);
+
+        if (fireConfirmed && fightConfirmed) {
+            card.classList.add('on-fire');
+            card.classList.add('on-fight');
+            badge.textContent = 'FIRE + FIGHT';
+            badge.className   = 'badge fire';
+        } else if (fireConfirmed) {
+            card.classList.remove('on-fight');
+        } else if (fightConfirmed) {
+            card.classList.remove('on-fire');
+            card.classList.add('on-fight');
+            badge.textContent = 'FIGHT';
+            badge.className   = 'badge fight';
+        }
+
+        setTimeout(loop, DETECTION_INTERVAL_MS);
+    }
+
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        loop();
+    } else {
+        video.addEventListener('canplay', loop, { once: true });
+    }
+}
+
+// ─── Which godowns use fight detection ──────────────────────────────────────
+const FIGHT_GODOWNS = new Set([1, 2, 3, 4, 5]);
 
 // ─── Build UI ────────────────────────────────────────────────────────────────
 
@@ -191,15 +345,27 @@ async function main() {
     buildUI();
 
     try {
-        statusEl.textContent = 'Loading fire detection model...';
-        await loadModel('model/fire_model.onnx'); // from detector.js
-        statusEl.textContent  = 'All systems active — monitoring 5 godowns';
-        statusEl.className    = 'status ok';
+        statusEl.textContent = 'Loading models...';
+
+        // Load fire + fight models in parallel
+        await Promise.all([
+            loadModel('model/fire_model.onnx'),
+            loadFightModels('model/yolov8n-pose.onnx', 'model/fight_classifier.onnx'),
+        ]);
+
+        statusEl.textContent = 'All systems active — monitoring 5 godowns';
+        statusEl.className   = 'status ok';
 
         // Init alert tracking and stagger starts
         GODOWNS.forEach(({ id }, index) => {
-            initAlertState(id);
-            setTimeout(() => startLoop(id), index * 400);
+            initAlertState(id); // all godowns get fire detection
+            if (FIGHT_GODOWNS.has(id)) {
+                initFightAlertState(id);
+                initFightBuffer(id);
+                setTimeout(() => startCombinedLoop(id), index * 400);
+            } else {
+                setTimeout(() => startLoop(id), index * 400);
+            }
         });
     } catch (err) {
         statusEl.textContent = `Model error: ${err.message}`;

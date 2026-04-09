@@ -54,6 +54,11 @@ body {
     box-shadow: 0 0 12px rgba(255, 51, 51, 0.5);
 }
 
+.card.on-fight {
+    border-color: #ffa500;
+    box-shadow: 0 0 12px rgba(255, 165, 0, 0.5);
+}
+
 /* ── Card header ────────────────────────────────────────────────────────────── */
 .card-header {
     display: flex;
@@ -89,6 +94,12 @@ body {
 .badge.fire {
     background: rgba(255, 51, 51, 0.4);
     color: #ff3333;
+    animation: blink 0.8s step-start infinite;
+}
+
+.badge.fight {
+    background: rgba(255, 165, 0, 0.4);
+    color: #ffa500;
     animation: blink 0.8s step-start infinite;
 }
 
