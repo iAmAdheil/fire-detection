@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Godown Monitor — Analytics Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+    <!-- ── Top Navigation ──────────────────────────────────────────────────── -->
+    <nav class="top-nav">
+        <div class="nav-left">
+            <div class="nav-logo"></div>
+            <span class="nav-title">Godown Monitor</span>
+        </div>
+        <div class="nav-right">
+            <a href="index.html" class="nav-link">Live Feed</a>
+            <a href="dashboard.html" class="nav-link active">Analytics</a>
+            <span class="time-display" id="clock"></span>
+        </div>
+    </nav>
+
+    <!-- ── Dashboard ───────────────────────────────────────────────────────── -->
+    <main class="dashboard">
+
+        <!-- Summary Cards -->
+        <section>
+            <div class="section-header">
+                <span class="section-title">Overview — Last 30 Days</span>
+                <span class="section-meta">Auto-refreshes every 60s</span>
+            </div>
+            <div class="summary-row" id="summary-row"></div>
+        </section>
+
+        <!-- Timeline + Type Distribution -->
+        <section class="chart-grid">
+            <div class="card">
+                <span class="card-title">Incident Timeline</span>
+                <span class="card-subtitle">Daily incident count by type over the last 30 days</span>
+                <div class="chart-container">
+                    <canvas id="chart-timeline"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <span class="card-title">Type Distribution</span>
+                <span class="card-subtitle">Proportion of fire, smoke, and fight incidents</span>
+                <div class="chart-container">
+                    <canvas id="chart-distribution"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Godown Breakdown + Peak Hours + Risk Scores -->
+        <section class="chart-grid-3">
+            <div class="card">
+                <span class="card-title">Incidents by Godown</span>
+                <span class="card-subtitle">Stacked breakdown per location</span>
+                <div class="chart-container">
+                    <canvas id="chart-godown"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <span class="card-title">Peak Activity Hours</span>
+                <span class="card-subtitle">When incidents occur most frequently</span>
+                <div class="chart-container">
+                    <canvas id="chart-hours"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <span class="card-title">Godown Risk Scores</span>
+                <span class="card-subtitle">Weighted risk index per location</span>
+                <div class="risk-list" id="risk-list"></div>
+            </div>
+        </section>
+
+        <!-- Severity + Heatmap -->
+        <section class="chart-grid-2">
+            <div class="card">
+                <span class="card-title">Severity Distribution</span>
+                <span class="card-subtitle">Incidents classified by detection confidence</span>
+                <div class="severity-grid" id="severity-grid"></div>
+            </div>
+            <div class="card">
+                <span class="card-title">Activity Heatmap</span>
+                <span class="card-subtitle">Godown vs hour-of-day — darker = more incidents</span>
+                <div class="heatmap-grid" id="heatmap-grid"></div>
+            </div>
+        </section>
+
+        <!-- Avg Confidence -->
+        <section class="chart-grid">
+            <div class="card">
+                <span class="card-title">Average Detection Confidence</span>
+                <span class="card-subtitle">Mean confidence score per incident type</span>
+                <div class="chart-container" style="min-height: 140px;">
+                    <canvas id="chart-confidence"></canvas>
+                </div>
+            </div>
+            <div class="card" style="justify-content: center; align-items: center; gap: 24px;">
+                <span class="card-title" style="text-align: center;">Active Incidents</span>
+                <div id="active-count" style="font-family: var(--font-mono); font-size: 3.5rem; font-weight: 700; color: var(--accent-red);"></div>
+                <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em;">Require Attention</span>
+            </div>
+        </section>
+
+        <!-- Recent Incidents Table -->
+        <section>
+            <div class="section-header" style="margin-bottom: 12px;">
+                <span class="section-title">Recent Incidents</span>
+                <div class="filter-bar">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="fire">Fire</button>
+                    <button class="filter-btn" data-filter="smoke">Smoke</button>
+                    <button class="filter-btn" data-filter="fight">Fight</button>
+                </div>
+            </div>
+            <div class="card" style="padding: 0; overflow: hidden;">
+                <div class="table-wrap">
+                    <table class="incidents-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Timestamp</th>
+                                <th>Location</th>
+                                <th>Type</th>
+                                <th>Confidence</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="incidents-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script src="js/incident-logger.js"></script>
+    <script src="js/dashboard.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const active = IncidentLogger.query({ status: 'active' }).length;
+            document.getElementById('active-count').textContent = active;
+
+            // Detect if loaded inside an iframe and hide the nav
+            if (window.self !== window.top) {
+                document.body.classList.add('in-iframe');
+            }
+        });
+    </script>
+
+</body>
+</html>

@@ -69,10 +69,24 @@ function updateAlertState(id, detections) {
         state.lastAlertTime = now;
         console.log(`🚨 [Godown ${id}] FIRE CONFIRMED — ${strongCount}/${WINDOW_SIZE} frames`);
         sendTelegramAlert(id);
+
+        // Log to incident store for the analytics dashboard
+        if (typeof IncidentLogger !== 'undefined') {
+            const bestDet = detections.reduce((a, b) => a.confidence > b.confidence ? a : b, detections[0]);
+            IncidentLogger.log({
+                godownId: id,
+                type: bestDet ? bestDet.label : 'fire',
+                confidence: bestDet ? bestDet.confidence : 0.5,
+            });
+        }
     }
 
     // Reset alerted flag when fire clears (so it can re-trigger if fire returns)
     if (strongCount === 0) {
+        if (state.alerted && typeof IncidentLogger !== 'undefined') {
+            IncidentLogger.resolve(id, 'fire');
+            IncidentLogger.resolve(id, 'smoke');
+        }
         state.alerted = false;
     }
 
@@ -107,9 +121,21 @@ function updateFightAlertState(id, fightProb) {
         state.lastAlertTime = now;
         console.log(`⚠️ [Godown ${id}] FIGHT CONFIRMED — ${strongCount}/${FIGHT_WINDOW_SIZE} frames`);
         sendTelegramAlert(id, 'fight');
+
+        // Log to incident store for the analytics dashboard
+        if (typeof IncidentLogger !== 'undefined') {
+            IncidentLogger.log({
+                godownId: id,
+                type: 'fight',
+                confidence: fightProb,
+            });
+        }
     }
 
     if (strongCount === 0) {
+        if (state.alerted && typeof IncidentLogger !== 'undefined') {
+            IncidentLogger.resolve(id, 'fight');
+        }
         state.alerted = false;
     }
 

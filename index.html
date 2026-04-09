@@ -26,12 +26,51 @@
     -->
     <main id="grid"></main>
 
+    <!-- Analytics button -->
+    <button id="analytics-btn" onclick="openDashboard()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <rect x="1" y="8" width="3" height="6"/><rect x="6.5" y="4" width="3" height="10"/><rect x="12" y="1" width="3" height="13"/>
+        </svg>
+        Analytics
+    </button>
+
+    <!-- Dashboard modal -->
+    <div id="dashboard-overlay" class="modal-overlay" onclick="closeDashboard(event)">
+        <div class="modal-container">
+            <button class="modal-close" onclick="closeDashboard()">&times;</button>
+            <iframe id="dashboard-iframe" src="about:blank"></iframe>
+        </div>
+    </div>
+
     <!--
         detector.js  — model loading, preprocessing, inference, postprocessing
         app.js       — UI construction, detection loop, box drawing
         Order matters: detector.js must come first so app.js can call loadModel() and detect()
     -->
+    <script>
+        function openDashboard() {
+            const overlay = document.getElementById('dashboard-overlay');
+            const iframe  = document.getElementById('dashboard-iframe');
+            if (iframe.src === 'about:blank' || !iframe.src.includes('dashboard.html')) {
+                iframe.src = 'dashboard.html';
+            }
+            overlay.classList.add('open');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeDashboard(e) {
+            if (e && e.target !== e.currentTarget) return;
+            document.getElementById('dashboard-overlay').classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeDashboard();
+        });
+    </script>
+
     <script src="config.js"></script>
+    <script src="js/incident-logger.js"></script>
     <script src="js/detector.js"></script>
     <script src="js/fight_detector.js"></script>
     <script src="js/app.js"></script>
